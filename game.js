@@ -3,9 +3,15 @@ const ctx = canvas.getContext('2d');
 const scoreText = document.getElementById('score');
 const bestText = document.getElementById('best');
 
-const W = canvas.width;
-const H = canvas.height;
+const design = { w: 960, h: 540 };
+let W = design.w;
+let H = design.h;
 const keys = { left: false, right: false };
+const isAndroidPhone = /Android/i.test(navigator.userAgent) && window.matchMedia('(pointer: coarse)').matches;
+
+if (isAndroidPhone) {
+  document.body.classList.add('android-phone');
+}
 
 let bestScore = Number(localStorage.getItem('ball-buster-best') || '0');
 bestText.textContent = `Best: ${bestScore}`;
@@ -18,19 +24,19 @@ const state = {
   time: 0,
   spawnTimer: 0,
   lastTime: 0,
-  pointerX: W * 0.5,
+  pointerX: design.w * 0.5,
   enemies: [],
   stars: [],
   player: {
-    x: W * 0.5,
-    y: H - 26,
+    x: design.w * 0.5,
+    y: design.h - 26,
     w: 140,
     h: 18,
     speed: 360,
   },
   ball: {
-    x: W * 0.5,
-    y: H - 54,
+    x: design.w * 0.5,
+    y: design.h - 54,
     vx: 0,
     vy: 0,
     r: 12,
@@ -47,6 +53,79 @@ function randomBetween(min, max) {
   return min + Math.random() * (max - min);
 }
 
+function resizeCanvas() {
+  const shellWidth = canvas.parentElement ? canvas.parentElement.clientWidth : window.innerWidth;
+  const maxWidth = Math.min(shellWidth, 980);
+  const maxHeight = Math.min(window.innerHeight * 0.7, 680);
+  const ratio = design.h / design.w;
+
+  let nextWidth = maxWidth;
+  let nextHeight = nextWidth * ratio;
+
+  if (isAndroidPhone) {
+    const viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    nextWidth = window.innerWidth;
+    nextHeight = viewportHeight;
+  } else if (nextHeight > maxHeight) {
+    nextHeight = maxHeight;
+    nextWidth = nextHeight / ratio;
+  }
+
+  const prevW = W;
+  const prevH = H;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  W = nextWidth;
+  H = nextHeight;
+
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  canvas.style.width = `${W}px`;
+  canvas.style.height = `${H}px`;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  if (prevW && prevH) {
+    const scaleX = W / prevW;
+    const scaleY = H / prevH;
+    const scale = Math.min(scaleX, scaleY);
+
+    state.player.x *= scaleX;
+    state.player.y *= scaleY;
+    state.player.w *= scaleX;
+    state.player.h *= scaleY;
+    state.player.speed *= scale;
+
+    state.ball.x *= scaleX;
+    state.ball.y *= scaleY;
+    state.ball.r *= scale;
+
+    state.pointerX *= scaleX;
+
+    state.enemies = state.enemies.map((enemy) => ({
+      ...enemy,
+      x: enemy.x * scaleX,
+      y: enemy.y * scaleY,
+      r: enemy.r * scale,
+      speed: enemy.speed * scale,
+    }));
+
+    state.stars = state.stars.map((star) => ({
+      ...star,
+      x: star.x * scaleX,
+      y: star.y * scaleY,
+      r: star.r * scale,
+      speed: star.speed * scale,
+    }));
+  }
+
+  state.player.x = clamp(state.player.x, state.player.w * 0.5, W - state.player.w * 0.5);
+  state.player.y = H - state.player.h * 0.5 - 6;
+
+  state.ball.x = clamp(state.ball.x, state.ball.r, W - state.ball.r);
+  state.ball.y = clamp(state.ball.y, state.ball.r, H - state.ball.r);
+  state.pointerX = clamp(state.pointerX, 0, W);
+}
+
 function setupStars() {
   state.stars = Array.from({ length: 80 }, () => ({
     x: Math.random() * W,
@@ -57,8 +136,9 @@ function setupStars() {
 }
 
 function resetBall() {
+  state.player.y = H - state.player.h * 0.5 - 6;
   state.ball.x = state.player.x;
-  state.ball.y = state.player.y - 26;
+  state.ball.y = state.player.y - state.ball.r - 14;
   state.ball.vx = 0;
   state.ball.vy = 0;
   state.ball.launched = false;
@@ -74,6 +154,7 @@ function resetGame() {
   state.spawnTimer = 0;
   state.enemies = [];
   state.player.x = W * 0.5;
+  state.player.y = H - state.player.h * 0.5 - 6;
   resetBall();
   updateHud();
 }
@@ -224,7 +305,7 @@ function update(dt) {
 
   if (!state.started && !state.over) {
     state.ball.x = state.player.x;
-    state.ball.y = state.player.y - 26;
+    state.ball.y = state.player.y - state.ball.r - 14;
   }
 }
 
@@ -370,6 +451,11 @@ window.addEventListener('keyup', (event) => {
   }
 });
 
+window.addEventListener('resize', resizeCanvas);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', resizeCanvas);
+}
+
 canvas.addEventListener('pointermove', (event) => {
   const rect = canvas.getBoundingClientRect();
   const rawX = ((event.clientX - rect.left) / rect.width) * W;
@@ -377,13 +463,18 @@ canvas.addEventListener('pointermove', (event) => {
   state.player.x = clamp(rawX, state.player.w * 0.5, W - state.player.w * 0.5);
 });
 
-canvas.addEventListener('pointerdown', () => {
+canvas.addEventListener('pointerdown', (event) => {
+  if (event.pointerType === 'touch' || event.pointerType === 'pen') {
+    event.preventDefault();
+  }
+
   if (!state.started && !state.over) {
     resetGame();
   }
   launchBall();
 });
 
+resizeCanvas();
 setupStars();
 resetBall();
 updateHud();
